@@ -13,6 +13,7 @@ Gst.init(None)
 import logging
 import thread
 import os
+from threading import Timer
 from collections import OrderedDict
 
 logger = logging.getLogger(__name__)
@@ -49,7 +50,6 @@ class DecoderPipeline2(object):
         self.queue2 = Gst.ElementFactory.make("queue", "queue2")
         self.asr = Gst.ElementFactory.make("kaldinnet2onlinedecoder", "asr")
         self.fakesink = Gst.ElementFactory.make("fakesink", "fakesink")
-
         if not self.asr:
             print >> sys.stderr, "ERROR: Couldn't create the kaldinnet2onlinedecoder element!"
             gst_plugin_path = os.environ.get("GST_PLUGIN_PATH")
@@ -65,6 +65,13 @@ class DecoderPipeline2(object):
                     "The environment variable GST_PLUGIN_PATH wasn't set or it's empty. " \
                     "Try to set GST_PLUGIN_PATH environment variable, and retry."
             sys.exit(-1);
+
+        def scheduled_task(conf):
+            logger.info("TEEEST:: run set property fst %s" % (conf["fst"]))
+            self.asr.set_state(Gst.State.PAUSED)
+            self.asr.set_property("fst", conf["fst"])
+            self.asr.set_state(Gst.State.PLAYING)
+
 
         # This needs to be set first
         if "use-threaded-decoder" in conf["decoder"]:
@@ -87,6 +94,10 @@ class DecoderPipeline2(object):
             if key != "use-threaded-decoder":
                 logger.info("Setting decoder property: %s = %s" % (key, val))
                 self.asr.set_property(key, val)
+
+        # Change FST model realtime after 10s (replace this with external call )
+        timer = Timer(10, scheduled_task, [decoder_config])
+        timer.start()
 
         self.appsrc.set_property("is-live", True)
         self.filesink.set_property("location", "/dev/null")
@@ -141,12 +152,12 @@ class DecoderPipeline2(object):
     def _on_partial_result(self, asr, hyp):
         logger.info("%s: Got partial result: %s" % (self.request_id, hyp.decode('utf8')))
         if self.result_handler:
-            self.result_handler(hyp.decode('utf8'), False)
+            self.result_handler(hyp, False)
 
     def _on_final_result(self, asr, hyp):
         logger.info("%s: Got final result: %s" % (self.request_id, hyp.decode('utf8')))
         if self.result_handler:
-            self.result_handler(hyp.decode('utf8'), True)
+            self.result_handler(hyp, True)
 
     def _on_full_final_result(self, asr, result_json):
         logger.info("%s: Got full final result: %s" % (self.request_id, result_json.decode('utf8')))
